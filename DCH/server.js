@@ -6,7 +6,7 @@ const soap = require("soap");
 const path = require("path");
 const xmlconvert = require("xml-js");
 const fs = require("fs");
-
+const uuidv4 = require("uuid/v4");
 const port = 8868;
 const soapPath = "/wsdl";
 
@@ -44,26 +44,36 @@ wsdlops = wsdljs["definitions"]["portType"]["operation"];
 wsdlops.forEach(function(op) {
   console.log(op._attributes.name);
 
-  dchService[wsdlservice][wsdlport][op._attributes.name] = function() {
+  dchService[wsdlservice][wsdlport][op._attributes.name] = function(
+    args,
+    cb,
+    headers
+  ) {
     dchFunc(op._attributes.name, args, cb, headers);
   };
 }, this);
 
 ////////////////////////////////////////////////////
 
-express.use(
-  basicAuth({
-    users: {
-      innogy: "innogy15118"
-    }
-  })
-);
+// express.use(
+//   basicAuth({
+//     users: {
+//       innogy: "innogy15118"
+//     }
+//   })
+// );
 
 express.listen(port, function() {
+  console.log("in listen");
+
   soapServer = soap.listen(express, {
     path: "/wsdl",
     services: dchService,
     xml: wsdlxml
+  });
+  soapServer.on("headers", function(headers, methodName) {
+    console.log(headers);
+    console.log(methodName);
   });
 });
 
@@ -73,6 +83,8 @@ express.get("/", function(req, res) {
 
 // define the default ocpp soap function for the server
 let dchFunc = function(command, args, cb, headers) {
+  console.log(`Made it to the dch Func call: ${command}`);
+
   // create a unique id for each message to identify responses
   let id = uuidv4();
 
