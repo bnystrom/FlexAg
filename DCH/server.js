@@ -6,9 +6,12 @@ const soap = require("soap");
 const path = require("path");
 const xmlconvert = require("xml-js");
 const fs = require("fs");
+const debug = require("debug")("anl:flexag:server");
 const uuidv4 = require("uuid/v4");
 const port = 8868;
 const soapPath = "/wsdl";
+
+const mqtt = require("mqtt");
 
 ////////////////////////////////////////////////////
 
@@ -21,11 +24,22 @@ let dchService = {};
 
 let soapServer;
 
+const configpath = path.join(__dirname, "..", "secrets.config");
+
+const config = JSON.parse(fs.readFileSync(configpath, "utf8"));
+
 let wsdlpath = path.join(
   __dirname,
   "../wsdl",
   "ChargePointOperatorService.wsdl"
 );
+
+let mqtt_client = mqtt.connect(config.mqtt.url, {
+  username: config.mqtt.username,
+  password: config.mqtt.password
+});
+
+mqtt_client.on("connect", () => debug("mqtt connected...."));
 
 const wsdlxml = fs.readFileSync(wsdlpath, "utf8");
 
@@ -42,7 +56,7 @@ dchService[wsdlservice][wsdlport] = {};
 wsdlops = wsdljs["definitions"]["portType"]["operation"];
 
 wsdlops.forEach(function(op) {
-  console.log(op._attributes.name);
+  // console.log(op._attributes.name);
 
   dchService[wsdlservice][wsdlport][op._attributes.name] = function(
     args,
@@ -54,27 +68,53 @@ wsdlops.forEach(function(op) {
 }, this);
 
 ////////////////////////////////////////////////////
+// let users = { innogy: config.soap.auth.password };
 
-// express.use(
-//   basicAuth({
-//     users: {
-//       innogy: "innogy15118"
-//     }
-//   })
-// );
+let users = { [config.soap.auth.username]: config.soap.auth.password };
+
+let useAuth = false;
+
+if (config.soap.hasOwnProperty("useAuth")) {
+  useAuth = config.soap.useAuth;
+}
+
+debug(useAuth);
+
+if (useAuth) {
+  if (
+    config.soap.hasOwnProperty("auth") &&
+    config.soap.auth.hasOwnProperty("username") &&
+    config.soap.auth.hasOwnProperty("password")
+  ) {
+    debug("using auth for soap");
+    express.use(basicAuth({ users }));
+  }
+}
 
 express.listen(port, function() {
-  console.log("in listen");
+  debug("in listen");
 
-  soapServer = soap.listen(express, {
-    path: "/wsdl",
-    services: dchService,
-    xml: wsdlxml
-  });
-  soapServer.on("headers", function(headers, methodName) {
-    console.log(headers);
-    console.log(methodName);
-  });
+  soapServer = soap.listen(express, "/wsdl", dchService, wsdlxml, () =>
+    debug("SOAP server initialized...")
+  );
+  // soapServer.on("headers", function(headers, methodName) {
+  //   console.log(methodName);
+  //   console.log(headers);
+  // });
+
+  // soapServer.on("request", function(req, methodName) {
+  //   debug(methodName);
+  //   debug(req);
+  // });
+
+  // soapServer.authenticate = function(security) {
+  //   var created, nonce, password, user, token;
+  //   debug(`User: ${security}`);
+  //   return false;
+  // };
+  // soapServer.log = function(type, data) {
+  //   debug(`${type}: ${data}`);
+  // };
 });
 
 express.get("/", function(req, res) {
@@ -83,8 +123,9 @@ express.get("/", function(req, res) {
 
 // define the default ocpp soap function for the server
 let dchFunc = function(command, args, cb, headers) {
-  console.log(`Made it to the dch Func call: ${command}`);
-
+  debug(`Made it to the dch Func call: ${command}`);
+  mqtt_client.publish(`test/flexAg/req/${command}`, JSON.stringify(args));
+  return;
   // create a unique id for each message to identify responses
   let id = uuidv4();
 
