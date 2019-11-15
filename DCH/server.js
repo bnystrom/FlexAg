@@ -7,11 +7,16 @@ const path = require("path");
 const xmlconvert = require("xml-js");
 const fs = require("fs");
 const debug = require("debug")("anl:flexag:server");
-const uuidv4 = require("uuid/v4");
+//const uuidv4 = require("uuid/v4");
+const mqtt = require("mqtt");
+const events = require("events");
+
 const port = 8868;
 const soapPath = "/wsdl";
+const mqttTopic = "test/flexAg";
+const EventEmitter = events.EventEmitter;
 
-const mqtt = require("mqtt");
+let ee = new EventEmitter();
 
 ////////////////////////////////////////////////////
 
@@ -35,11 +40,19 @@ let wsdlpath = path.join(
 );
 
 let mqtt_client = mqtt.connect(config.mqtt.url, {
-  username: config.mqtt.username,
-  password: config.mqtt.password
+  username: config.mqtt.auth.username,
+  password: config.mqtt.auth.password
 });
 
 mqtt_client.on("connect", () => debug("mqtt connected...."));
+
+mqtt_client.subscribe(`${mqttTopic}/res/#`, function(err) {
+  if (err) console.error(`MQTT Error: ${err}`);
+});
+
+mqtt_client.on("message", function(topic, message) {
+  debug(`Got MQTT response: ${topic} -> ${message}`);
+});
 
 const wsdlxml = fs.readFileSync(wsdlpath, "utf8");
 
@@ -68,7 +81,6 @@ wsdlops.forEach(function(op) {
 }, this);
 
 ////////////////////////////////////////////////////
-// let users = { innogy: config.soap.auth.password };
 
 let users = { [config.soap.auth.username]: config.soap.auth.password };
 
@@ -97,71 +109,57 @@ express.listen(port, function() {
   soapServer = soap.listen(express, "/wsdl", dchService, wsdlxml, () =>
     debug("SOAP server initialized...")
   );
-  // soapServer.on("headers", function(headers, methodName) {
-  //   console.log(methodName);
-  //   console.log(headers);
-  // });
+
+  soapServer.on("headers", function(headers, methodName) {
+    console.log(methodName);
+    console.log(headers);
+  });
 
   // soapServer.on("request", function(req, methodName) {
   //   debug(methodName);
   //   debug(req);
   // });
 
-  // soapServer.authenticate = function(security) {
-  //   var created, nonce, password, user, token;
-  //   debug(`User: ${security}`);
-  //   return false;
-  // };
   // soapServer.log = function(type, data) {
   //   debug(`${type}: ${data}`);
   // };
 });
 
 express.get("/", function(req, res) {
-  res.send("Hello");
+  res.send("<h2>Hello from ANL Flex Aggregator</h2>");
 });
 
 // define the default ocpp soap function for the server
-let dchFunc = function(command, args, cb, headers) {
+let dchFunc = function(command, soapbody, cb, headers) {
   debug(`Made it to the dch Func call: ${command}`);
-  mqtt_client.publish(`test/flexAg/req/${command}`, JSON.stringify(args));
-  return;
-  // create a unique id for each message to identify responses
-  let id = uuidv4();
+
+  let eeID;
+
+  if (soapbody.hasOwnProperty("RequestID")) {
+    eeID = soapbody.RequestID;
+  } else {
+    console.error("Invalid request. Missing RequestID");
+    return;
+  }
+
+  mqtt_client.publish(`${mqttTopic}/req/${command}`, JSON.stringify(soapbody));
 
   // Set a timout for each event response so they do not pile up if not responded to
   let to = setTimeout(
-    function(id) {
+    function(eeID) {
       // node.log("kill:" + id);
-      if (ee.listenerCount(id) > 0) {
-        let evList = ee.listeners(id);
-        ee.removeListener(id, evList[0]);
+      if (ee.listenerCount(eeID) > 0) {
+        let evList = ee.listeners(eeID);
+        ee.removeListener(eeID, evList[0]);
       }
     },
     120 * 1000,
-    id
+    eeID
   );
 
   // This makes the response async so that we pass the responsibility onto the response node
-  ee.once(id, function(returnMsg) {
+  ee.once(eeID, function(returnMsg) {
     clearTimeout(to);
     cb(returnMsg);
   });
-
-  // Add custom headers to the soap package
-
-  // let soapSvr = ocppVer == '1.5' ? soapServer15 : soapServer16;
-
-  // addHeaders(headers, soapSvr);
-
-  // let cbi =
-  //   headers.chargeBoxIdentity.$value ||
-  //   headers.chargeBoxIdentity ||
-  //   'Unknown';
-  let action = command;
-  console.log(command);
-
-  // node.status({ fill: 'green', shape: 'ring', text: cbi + ': ' + action });
-  // // Send the message out to the rest of the flow
-  // sendMsg(ocppVer, command, id, args, headers);
 };
