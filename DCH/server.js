@@ -13,7 +13,6 @@ const events = require("events");
 
 const port = 8868;
 const soapPath = "/wsdl";
-const mqttTopic = "test/flexAg";
 const EventEmitter = events.EventEmitter;
 
 let ee = new EventEmitter();
@@ -33,6 +32,8 @@ const configpath = path.join(__dirname, "..", "secrets.config");
 
 const config = JSON.parse(fs.readFileSync(configpath, "utf8"));
 
+const mqttTopic = config.mqtt.topicHead;
+
 let wsdlpath = path.join(
   __dirname,
   "../wsdl",
@@ -50,8 +51,11 @@ mqtt_client.subscribe(`${mqttTopic}/res/#`, function(err) {
   if (err) console.error(`MQTT Error: ${err}`);
 });
 
-mqtt_client.on("message", function(topic, message) {
-  debug(`Got MQTT response: ${topic} -> ${message}`);
+mqtt_client.on("message", function(topic, res) {
+  debug(`Got MQTT response: [${topic}] ${res}`);
+  let x = JSON.parse(res);
+  let eeID = x.RequestID;
+  ee.emit(eeID, x);
 });
 
 const wsdlxml = fs.readFileSync(wsdlpath, "utf8");
@@ -137,12 +141,11 @@ let dchFunc = function(command, soapbody, cb, headers) {
 
   if (soapbody.hasOwnProperty("RequestID")) {
     eeID = soapbody.RequestID;
+    debug(`eeID = ${eeID}`);
   } else {
     console.error("Invalid request. Missing RequestID");
     return;
   }
-
-  mqtt_client.publish(`${mqttTopic}/req/${command}`, JSON.stringify(soapbody));
 
   // Set a timout for each event response so they do not pile up if not responded to
   let to = setTimeout(
@@ -157,9 +160,10 @@ let dchFunc = function(command, soapbody, cb, headers) {
     eeID
   );
 
-  // This makes the response async so that we pass the responsibility onto the response node
   ee.once(eeID, function(returnMsg) {
     clearTimeout(to);
     cb(returnMsg);
   });
+
+  mqtt_client.publish(`${mqttTopic}/req/${command}`, JSON.stringify(soapbody));
 };
