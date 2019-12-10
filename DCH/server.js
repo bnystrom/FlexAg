@@ -165,5 +165,14 @@ let dchFunc = function(command, soapbody, cb, headers) {
     cb(returnMsg);
   });
 
-  mqtt_client.publish(`${mqttTopic}/req/${command}`, JSON.stringify(soapbody));
+  const pubOptions = {
+    qos: 2,
+    retain: true
+  };
+
+  mqtt_client.publish(
+    `${mqttTopic}/req/${command}`,
+    JSON.stringify(soapbody),
+    pubOptions
+  );
 };
